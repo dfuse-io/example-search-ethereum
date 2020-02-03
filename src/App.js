@@ -39,8 +39,8 @@ function App() {
   }
   `;
 
-  const searchTransactionsQuery = `query ($query: String!, $lowBlockNum: Int64!, $highBlockNum: Int64, $limit: Int64!, $cursor: String) {
-    searchTransactions(query: $query, indexName:CALLS, lowBlockNum: $lowBlockNum, highBlockNum: $highBlockNum, sort: DESC, limit: $limit, cursor: $cursor) {
+  const searchTransactionsQuery = `query ($query: String!, $indexName:TRANSACTIONS_INDEX_NAME!, $lowBlockNum: Int64, $highBlockNum: Int64, $sort: SORT!, $cursor: String!, $limit: Int64!){
+    searchTransactions(query: $query, indexName: $indexName, lowBlockNum: $lowBlockNum, highBlockNum: $highBlockNum, sort: $sort,  cursor: $cursor, limit: $limit) {
       pageInfo {
         startCursor
         endCursor
@@ -73,34 +73,6 @@ function App() {
   
   ${FlatCallFragment}`;
 
-  const streamTransactionsQuery = `subscription ($query: String!, $cursor: String!, $lowBlockNum: Int64!, $highBlockNum: Int64!, $limit: Int64!, $sort: SORT!) {
-    searchTransactions(indexName: CALLS, query: $query, lowBlockNum: $lowBlockNum, highBlockNum: $highBlockNum, cursor: $cursor, limit: $limit, sort: $sort) {
-      cursor
-      undo
-      node {
-        value(encoding:WEI)
-        hash
-        nonce
-        gasLimit
-        gasUsed
-        gasPrice(encoding:WEI)
-        to
-        block {
-          number
-          hash
-          header {
-            timestamp
-          }
-        }
-        flatCalls {
-          ...FlatCallFragment
-        }
-      }
-    }
-  }
-
-  ${FlatCallFragment}`;
-
   const [query, setQuery] = useState('');
   const [transactions, setTransactions] = useState([]);
   const [state, setState] = useState('initialize');
@@ -112,83 +84,41 @@ function App() {
     };
   }
 
-  // async function searchTransactions() {
-  //   setTransactions([]);
-  //   setState('searching');
-
-  //   const parsedSQE = parseSQE(query);
-
-  //   console.log('1');
-  //   const response = await dfuseClient.graphql(searchTransactionsQuery, {
-  //     variables: {
-  //       // query: parsedSQE.query,
-  //       query:
-  //         '(from:0x6b23db4dCB3d741Fc73c5f63c93DFD368Cf3534c OR to:0x6b23db4dCB3d741Fc73c5f63c93DFD368Cf3534c)',
-  //       indexName: 'CALLS',
-  //       lowBlockNum: 0,
-  //       highBlockNum: -1,
-  //       sort: 'DESC',
-  //       limit: 25,
-  //       cursor: ''
-  //     }
-  //   });
-
-  //   console.log('2');
-
-  //   if (response.errors) {
-  //     response.errors.forEach(error => {
-  //       console.log('GraphQL Query Error', error.message, error);
-  //       setError(error.message);
-  //     });
-  //   } else {
-  //     const result = await response.data.searchTransactions.fetchData();
-  //     console.log(result);
-  //     setTransactions(result);
-  //     setState('completed');
-  //   }
-  // }
-
   async function searchTransactions() {
     await setTransactions([]);
     setState('searching');
-    let currentResults = [];
+    setError('');
     const parsedSQE = parseSQE(query);
-
-    const stream = await dfuseClient.graphql(
-      streamTransactionsQuery,
-      message => {
-        if (message.type === 'error') {
-          setError(message.errors[0]['message']);
-        }
-
-        if (message.type === 'data') {
-          currentResults = [
-            message.data.searchTransactions.node,
-            ...currentResults
-          ];
-          setTransactions(currentResults);
-        }
-
-        if (message.type === 'complete') {
-          setState('completed');
-        }
-      },
-      {
+    try {
+      const response = await dfuseClient.graphql(searchTransactionsQuery, {
         variables: {
           query: parsedSQE.query,
-          // query:
-          //   '(from:0x6b23db4dCB3d741Fc73c5f63c93DFD368Cf3534c OR to:0x6b23db4dCB3d741Fc73c5f63c93DFD368Cf3534c)',
           indexName: 'CALLS',
-          lowBlockNum: 0,
-          highBlockNum: -1,
-          sort: 'ASC',
-          limit: 25,
+          lowBlockNum: '0',
+          highBlockNum: '-1',
+          sort: 'DESC',
+          limit: '10',
           cursor: ''
         }
-      }
-    );
+      });
 
-    await stream.join();
+      if (response.errors) {
+        throw response.errors;
+      }
+
+      const edges = response.data.searchTransactions.edges || [];
+      if (edges.length <= 0) {
+        setError('Oops nothing found');
+        return;
+      }
+      setTransactions(edges.map(edge => edge.node));
+      setState('completed');
+    } catch (errors) {
+      setError(JSON.stringify(errors));
+      setState('completed');
+    }
+
+    dfuseClient.release();
   }
 
   return (
